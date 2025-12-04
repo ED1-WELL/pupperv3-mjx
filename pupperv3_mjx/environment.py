@@ -419,6 +419,16 @@ class PupperV3Env(PipelineEnv):
         done |= pipeline_state.x.pos[self._torso_idx - 1, 2] < self._terminal_body_z
 
         # Reward
+        def point_to_segment_distance_2d(p, a, b):
+            # p, a, b are shape (2,)
+            pa = p - a
+            ba = b - a
+            # prevent division by zero if a == b
+            ba_norm2 = jp.dot(ba, ba) + 1e-8
+            h = jp.clip(jp.dot(pa, ba) / ba_norm2, 0.0, 1.0)
+            closest = a + h * ba
+            return jp.linalg.norm(p - closest)
+        
         rewards_dict = {
             "tracking_lin_vel": rewards.reward_tracking_lin_vel(
                 state.info["command"],
@@ -481,6 +491,44 @@ class PupperV3Env(PipelineEnv):
             ),
             "body_collision": rewards.reward_geom_collision(pipeline_state, self._torso_geom_ids),
         }
+    ##############
+    
+        # -------------------------
+        # New: COM-over-rear-feet reward
+        # -------------------------
+        # use torso xy as a proxy for CoM (simple and cheap)
+        torso_pos = pipeline_state.x.pos[self._torso_idx - 1]  # shape (3,)
+        com_xy = torso_pos[:2]
+
+        # site_xpos earlier computed as `foot_pos`; index order in init: [front_r, front_l, back_r, back_l]
+        rear_r_xy = foot_pos[2, :2]
+        rear_l_xy = foot_pos[3, :2]
+
+        # distance from CoM to segment between rear feet (meters)
+        d_com_rear = point_to_segment_distance_2d(com_xy, rear_r_xy, rear_l_xy)
+
+        # gaussian-style reward for CoM close to rear support line (sigma ~ 0.03 m -> 3 cm)
+        sigma = 0.03
+        com_over_rear_val = jp.exp(- (d_com_rear ** 2) / (sigma ** 2))
+
+        rewards_dict["com_over_rear"] = com_over_rear_val
+
+        # -------------------------
+        # New: rear contact reward and front contact penalty
+        # -------------------------
+        # 'contact' boolean is [front_r, front_l, back_r, back_l]
+        # convert bool -> float (0/1)
+        contact_float = contact.astype(float)
+
+        rear_contact_val = contact_float[2] + contact_float[3]  # 0..2
+        front_contact_val = contact_float[0] + contact_float[1]  # 0..2
+
+        # reward rear contact presence (saturate using tanh-ish mapping)
+        rewards_dict["rear_contact"] = jp.tanh(rear_contact_val)
+
+        # penalize front contacts (we want less front load while balancing on rear legs)
+        rewards_dict["front_contact_penalty"] = -jp.tanh(front_contact_val)    
+        
         rewards_dict = {
             k: v * self._reward_config.rewards.scales[k] for k, v in rewards_dict.items()
         }
