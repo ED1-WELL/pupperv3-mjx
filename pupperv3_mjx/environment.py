@@ -234,7 +234,7 @@ class PupperV3Env(PipelineEnv):
         self._resample_velocity_step = resample_velocity_step
 
         # observation configuration
-        self.observation_dim = 36  # 33 without orientation, 36 with orientation
+        self.observation_dim = 42 #36  # 33 without orientation, 36 with orientation #########
         self._observation_history = observation_history
 
         # reward configuration
@@ -635,6 +635,37 @@ class PupperV3Env(PipelineEnv):
                 state_info["last_act"] + last_action_noise,  # last action
             ]
         )
+        # ------------------------- #######################
+        # EXTRA OBSERVATIONS (Step 3)
+        # -------------------------
+        # Use torso xy as simple CoM proxy
+        torso_pos = pipeline_state.x.pos[self._torso_idx - 1]  # (3,)
+        com_xy = torso_pos[:2]
+
+        # get current foot positions from pipeline_state.site_xpos using self._feet_site_id
+        foot_pos_all = pipeline_state.site_xpos[self._feet_site_id]  # shape (4,3) order: [front_r, front_l, back_r, back_l]
+        # rear feet indices in that ordering:
+        rear_r_xy = foot_pos_all[2, :2]
+        rear_l_xy = foot_pos_all[3, :2]
+
+        # center between rear feet
+        rear_center = 0.5 * (rear_r_xy + rear_l_xy)
+
+        # CoM relative to rear-center (2 scalars)
+        com_rel = com_xy - rear_center  # shape (2,)
+
+        # contact booleans -> floats (0/1)
+        foot_contact_z = foot_pos_all[:, 2] - self._foot_radius
+        contact_bool = (foot_contact_z < 1e-3)  # shape (4,) bool
+        contact_float = contact_bool.astype(float)  # shape (4,) float
+
+        # build extra observation vector: [com_rel_x, com_rel_y, contact_fr, contact_fl, contact_br, contact_bl]
+        extra_obs = jp.concatenate([com_rel, contact_float])
+
+        # Append new features to observation
+        obs = jp.concatenate([obs, extra_obs])
+
+
 
         # Clip observation values to prevent extreme values
         obs = jp.clip(obs, -100.0, 100.0)
