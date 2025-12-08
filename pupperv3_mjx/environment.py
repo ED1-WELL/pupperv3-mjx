@@ -428,7 +428,9 @@ class PupperV3Env(PipelineEnv):
             h = jp.clip(jp.dot(pa, ba) / ba_norm2, 0.0, 1.0)
             closest = a + h * ba
             return jp.linalg.norm(p - closest)
-        
+         # -------------------------
+        # Build base rewards dict (same as before)
+        # -------------------------
         rewards_dict = {
             "tracking_lin_vel": rewards.reward_tracking_lin_vel(
                 state.info["command"],
@@ -491,8 +493,7 @@ class PupperV3Env(PipelineEnv):
             ),
             "body_collision": rewards.reward_geom_collision(pipeline_state, self._torso_geom_ids),
         }
-    ##############
-    
+
         # -------------------------
         # New: COM-over-rear-feet reward
         # -------------------------
@@ -523,19 +524,134 @@ class PupperV3Env(PipelineEnv):
         rear_contact_val = contact_float[2] + contact_float[3]  # 0..2
         front_contact_val = contact_float[0] + contact_float[1]  # 0..2
 
-        # reward rear contact presence (saturate using tanh-ish mapping)
-        rewards_dict["rear_contact"] = jp.tanh(rear_contact_val)
+        # Keep raw values positive and let the scale control sign.
+        # Rear contact: fraction 0..1
+        rewards_dict["rear_contact"] = rear_contact_val / 2.0
 
-        # penalize front contacts (we want less front load while balancing on rear legs)
-        rewards_dict["front_contact_penalty"] = -jp.tanh(front_contact_val)    
-        
-        rewards_dict = {
-            k: v * self._reward_config.rewards.scales[k] for k, v in rewards_dict.items()
-        }
+        # Front contact raw value (positive); reward_config should have negative scale to penalize front contact
+        rewards_dict["front_contact_penalty"] = front_contact_val / 2.0
+
+        # -------------------------
+        # Apply scales safely (use .get to avoid KeyError)
+        # -------------------------
+        scales = getattr(self._reward_config.rewards, "scales", None)
+        if scales is None:
+            scales = {}
+        rewards_dict = {k: v * scales.get(k, 1.0) for k, v in rewards_dict.items()}
+
         # Clip individual rewards to prevent extreme values
         rewards_dict = {k: jp.clip(v, -1000.0, 1000.0) for k, v in rewards_dict.items()}
-        # Sum rewards and clip final value
-        reward = jp.clip(sum(rewards_dict.values()) * self.dt, 0.0, 10000.0)
+
+        # Sum rewards and clip final value but allow negatives so penalties matter
+        reward = jp.clip(sum(rewards_dict.values()) * self.dt, -10000.0, 10000.0)
+       
+    #     rewards_dict = {
+    #         "tracking_lin_vel": rewards.reward_tracking_lin_vel(
+    #             state.info["command"],
+    #             x,
+    #             xd,
+    #             tracking_sigma=self._reward_config.rewards.tracking_sigma,
+    #         ),
+    #         "tracking_ang_vel": rewards.reward_tracking_ang_vel(
+    #             state.info["command"],
+    #             x,
+    #             xd,
+    #             tracking_sigma=self._reward_config.rewards.tracking_sigma,
+    #         ),
+    #         "tracking_orientation": rewards.reward_tracking_orientation(
+    #             state.info["desired_world_z_in_body_frame"],
+    #             x,
+    #             tracking_sigma=self._reward_config.rewards.tracking_sigma,
+    #         ),
+    #         "lin_vel_z": rewards.reward_lin_vel_z(xd),
+    #         "ang_vel_xy": rewards.reward_ang_vel_xy(xd),
+    #         "orientation": rewards.reward_orientation(x),
+    #         "torques": rewards.reward_torques(
+    #             pipeline_state.qfrc_actuator
+    #         ),  # pytype: disable=attribute-error
+    #         "joint_acceleration": rewards.reward_joint_acceleration(
+    #             joint_vel, state.info["last_vel"], dt=self._dt
+    #         ),
+    #         "mechanical_work": rewards.reward_mechanical_work(
+    #             pipeline_state.qfrc_actuator[6:], pipeline_state.qvel[6:]
+    #         ),
+    #         "action_rate": rewards.reward_action_rate(action, state.info["last_act"]),
+    #         "stand_still": rewards.reward_stand_still(
+    #             state.info["command"], joint_angles, self._default_pose, 0.1
+    #         ),
+    #         "stand_still_joint_velocity": rewards.reward_stand_still(
+    #             state.info["command"], joint_vel, jp.zeros(12), self._stand_still_command_threshold
+    #         ),
+    #         "abduction_angle": rewards.reward_abduction_angle(
+    #             joint_angles,
+    #             desired_abduction_angles=self._desired_abduction_angles,
+    #         ),
+    #         "feet_air_time": rewards.reward_feet_air_time(
+    #             state.info["feet_air_time"],
+    #             first_contact,
+    #             state.info["command"],
+    #         ),
+    #         "foot_slip": rewards.reward_foot_slip(
+    #             pipeline_state,
+    #             contact_filt_cm,
+    #             feet_site_id=self._feet_site_id,
+    #             lower_leg_body_id=self._lower_leg_body_id,
+    #         ),
+    #         "termination": rewards.reward_termination(
+    #             done,
+    #             state.info["step"],
+    #             step_threshold=self._early_termination_step_threshold,
+    #         ),
+    #         "knee_collision": rewards.reward_geom_collision(
+    #             pipeline_state, self._upper_leg_geom_ids
+    #         ),
+    #         "body_collision": rewards.reward_geom_collision(pipeline_state, self._torso_geom_ids),
+    #     }
+    # ##############
+    
+    #     # -------------------------
+    #     # New: COM-over-rear-feet reward
+    #     # -------------------------
+    #     # use torso xy as a proxy for CoM (simple and cheap)
+    #     torso_pos = pipeline_state.x.pos[self._torso_idx - 1]  # shape (3,)
+    #     com_xy = torso_pos[:2]
+
+    #     # site_xpos earlier computed as `foot_pos`; index order in init: [front_r, front_l, back_r, back_l]
+    #     rear_r_xy = foot_pos[2, :2]
+    #     rear_l_xy = foot_pos[3, :2]
+
+    #     # distance from CoM to segment between rear feet (meters)
+    #     d_com_rear = point_to_segment_distance_2d(com_xy, rear_r_xy, rear_l_xy)
+
+    #     # gaussian-style reward for CoM close to rear support line (sigma ~ 0.03 m -> 3 cm)
+    #     sigma = 0.03
+    #     com_over_rear_val = jp.exp(- (d_com_rear ** 2) / (sigma ** 2))
+
+    #     rewards_dict["com_over_rear"] = com_over_rear_val
+
+    #     # -------------------------
+    #     # New: rear contact reward and front contact penalty
+    #     # -------------------------
+    #     # 'contact' boolean is [front_r, front_l, back_r, back_l]
+    #     # convert bool -> float (0/1)
+    #     contact_float = contact.astype(float)
+
+    #     rear_contact_val = contact_float[2] + contact_float[3]  # 0..2
+    #     front_contact_val = contact_float[0] + contact_float[1]  # 0..2
+
+    #     # reward rear contact presence (saturate using tanh-ish mapping)
+    #     rewards_dict["rear_contact"] = jp.tanh(rear_contact_val)
+
+    #     # penalize front contacts (we want less front load while balancing on rear legs)
+    #     rewards_dict["front_contact_penalty"] = -jp.tanh(front_contact_val)    
+        
+    #     rewards_dict = {
+    #         k: v * self._reward_config.rewards.scales[k] for k, v in rewards_dict.items()
+    #     }
+    #     # Clip individual rewards to prevent extreme values
+    #     rewards_dict = {k: jp.clip(v, -1000.0, 1000.0) for k, v in rewards_dict.items()}
+    #     # Sum rewards and clip final value
+    #     reward = jp.clip(sum(rewards_dict.values()) * self.dt, 0.0, 10000.0)
 
         # State management
         state.info["kick"] = kick
