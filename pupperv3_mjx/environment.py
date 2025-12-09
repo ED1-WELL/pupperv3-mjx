@@ -529,7 +529,7 @@ class PupperV3Env(PipelineEnv):
         
         # Front contact penalty: fraction of front feet contacting (we will penalize)
         front_contact_bool = contact[:2]
-        front_contact_penalty = -(abs(jp.sum(front_contact_bool.astype(float)) / 2.0))
+        front_contact_penalty = jp.sum(front_contact_bool.astype(float)) / 2.0
         
         # Add the computed components to the rewards dict (raw, will be scaled below).
         # Use keys matching the scales in your reward config.
