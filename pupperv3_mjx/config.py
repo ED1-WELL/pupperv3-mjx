@@ -32,8 +32,8 @@ def get_config():
 
                         # Gaits / foot terms
                         feet_air_time=0.2,
-                        stand_still=-0.2,
-                        stand_still_joint_velocity=-0.1,
+                        stand_still= 0.0,
+                        stand_still_joint_velocity= 0.0,
                         abduction_angle=-0.1,
 
                         # Safety / termination
@@ -44,14 +44,14 @@ def get_config():
 
                         # --- NEW balancing rewards ---
                         # Encourage CoM to be over rear feet support line.
-                        com_over_rear=3.0,
+                        com_over_rear=1.0,
 
                         # Reward for rear foot contacts (encourage rear legs to support load)
-                        rear_contact=1.0,
+                        rear_contact=0.5,
 
                         # Penalize front foot contact while balancing on rear (negative scale)
                         # Use negative value to penalize front contact.
-                        front_contact_penalty=-1.0,
+                        front_contact_penalty=-1.5,
                     )
                 ),
                 # Tracking reward width
