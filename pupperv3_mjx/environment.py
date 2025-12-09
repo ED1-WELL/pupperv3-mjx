@@ -183,7 +183,9 @@ class PupperV3Env(PipelineEnv):
         # override the default joint angles with default_pose
         sys.mj_model.keyframe("home").qpos[7:] = default_pose
 
-        n_frames = self._dt // sys.opt.timestep
+        #n_frames = self._dt // sys.opt.timestep
+        n_frames = int(self._dt / float(sys.opt.timestep))
+        
         super().__init__(sys, backend="mjx", n_frames=n_frames)
 
         self._reward_config = reward_config
