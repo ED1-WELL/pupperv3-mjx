@@ -494,43 +494,101 @@ class PupperV3Env(PipelineEnv):
             "body_collision": rewards.reward_geom_collision(pipeline_state, self._torso_geom_ids),
         }
 
-        # -------------------------
-        # New: COM-over-rear-feet reward
-        # -------------------------
-        # use torso xy as a proxy for CoM (simple and cheap)
-        torso_pos = pipeline_state.x.pos[self._torso_idx - 1]  # shape (3,)
-        com_xy = torso_pos[:2]
+        # # -------------------------
+        # # New: COM-over-rear-feet reward
+        # # -------------------------
+        # # use torso xy as a proxy for CoM (simple and cheap)
+        # torso_pos = pipeline_state.x.pos[self._torso_idx - 1]  # shape (3,)
+        # com_xy = torso_pos[:2]
 
-        # site_xpos earlier computed as `foot_pos`; index order in init: [front_r, front_l, back_r, back_l]
-        rear_r_xy = foot_pos[2, :2]
-        rear_l_xy = foot_pos[3, :2]
+        # # site_xpos earlier computed as `foot_pos`; index order in init: [front_r, front_l, back_r, back_l]
+        # rear_r_xy = foot_pos[2, :2]
+        # rear_l_xy = foot_pos[3, :2]
 
-        # distance from CoM to segment between rear feet (meters)
-        d_com_rear = point_to_segment_distance_2d(com_xy, rear_r_xy, rear_l_xy)
+        # # distance from CoM to segment between rear feet (meters)
+        # d_com_rear = point_to_segment_distance_2d(com_xy, rear_r_xy, rear_l_xy)
 
-        # gaussian-style reward for CoM close to rear support line (sigma ~ 0.03 m -> 3 cm)
-        sigma = 0.03
-        com_over_rear_val = jp.exp(- (d_com_rear ** 2) / (sigma ** 2))
+        # # gaussian-style reward for CoM close to rear support line (sigma ~ 0.03 m -> 3 cm)
+        # sigma = 0.03
+        # com_over_rear_val = jp.exp(- (d_com_rear ** 2) / (sigma ** 2))
 
-        rewards_dict["com_over_rear"] = com_over_rear_val
+        # rewards_dict["com_over_rear"] = com_over_rear_val
 
-        # -------------------------
-        # New: rear contact reward and front contact penalty
-        # -------------------------
-        # 'contact' boolean is [front_r, front_l, back_r, back_l]
-        # convert bool -> float (0/1)
-        contact_float = contact.astype(float)
+        # # -------------------------
+        # # New: rear contact reward and front contact penalty
+        # # -------------------------
+        # # 'contact' boolean is [front_r, front_l, back_r, back_l]
+        # # convert bool -> float (0/1)
+        # contact_float = contact.astype(float)
 
-        rear_contact_val = contact_float[2] + contact_float[3]  # 0..2
-        front_contact_val = contact_float[0] + contact_float[1]  # 0..2
+        # rear_contact_val = contact_float[2] + contact_float[3]  # 0..2
+        # front_contact_val = contact_float[0] + contact_float[1]  # 0..2
 
-        # Keep raw values positive and let the scale control sign.
-        # Rear contact: fraction 0..1
-        rewards_dict["rear_contact"] = rear_contact_val / 2.0
+        # # Keep raw values positive and let the scale control sign.
+        # # Rear contact: fraction 0..1
+        # rewards_dict["rear_contact"] = rear_contact_val / 2.0
 
-        # Front contact raw value (positive); reward_config should have negative scale to penalize front contact
-        rewards_dict["front_contact_penalty"] = front_contact_val / 2.0
+        # # Front contact raw value (positive); reward_config should have negative scale to penalize front contact
+        # rewards_dict["front_contact_penalty"] = front_contact_val / 2.0
 
+        ############
+                # --- Insert this block BEFORE the line that multiplies rewards by scales ---
+        # compute COM-over-rear and contact-based rewards
+        
+        # foot_pos is already computed earlier: pipeline_state.site_xpos[self._feet_site_id]
+        # contact is already computed earlier: boolean array for each foot (front_r, front_l, back_r, back_l)
+        
+        # --- helper to compute distance from point p to segment ab in 2D (x,y) ---
+        def _point_to_segment_dist_2d(p, a, b):
+            # p,a,b are shape (2,) arrays in world xy
+            pa = p - a
+            ba = b - a
+            ba_norm2 = jp.dot(ba, ba) + 1e-8
+            h = jp.clip(jp.dot(pa, ba) / ba_norm2, 0.0, 1.0)
+            closest = a + h * ba
+            return jp.linalg.norm(p - closest)
+        
+        # foot positions for the 4 feet (Nx3), order should be [front_r, front_l, back_r, back_l]
+        feet_pos = pipeline_state.site_xpos[self._feet_site_id]  # shape (4,3)
+        # COM in world coords (x,y)
+        com_xy = pipeline_state.x.pos[self._torso_idx - 1][:2]
+        
+        # rear feet indices (assumes ordering as in env constructor)
+        rear_a = feet_pos[2, :2]  # back_r
+        rear_b = feet_pos[3, :2]  # back_l
+        
+        # COM->rear-segment distance (meters)
+        com_rear_dist = _point_to_segment_dist_2d(com_xy, rear_a, rear_b)
+        
+        # Reward shape: high when COM near rear segment; use an RBF-like function
+        # sigma controls width (tune; 0.08 is a reasonable start)
+        _sigma = 0.08
+        com_over_rear_reward = jp.exp(- (com_rear_dist ** 2) / (_sigma ** 2))
+        
+        # Rear contact reward: fraction of rear feet in contact (0..1)
+        rear_contact_bool = contact[2:]   # boolean array for back_r, back_l
+        rear_contact_reward = jp.sum(rear_contact_bool.astype(float)) / 2.0
+        
+        # Front contact penalty: fraction of front feet contacting (we will penalize)
+        front_contact_bool = contact[:2]
+        front_contact_penalty = jp.sum(front_contact_bool.astype(float)) / 2.0
+        
+        # Add the computed components to the rewards dict (raw, will be scaled below).
+        # Use keys matching the scales in your reward config.
+        # Make sure keys do not clash with existing keys already in rewards_dict
+        extra_rewards = {
+            "com_over_rear": com_over_rear_reward,
+            "rear_contact": rear_contact_reward,
+            "front_contact_penalty": -front_contact_penalty,  # negative here, scale controls magnitude
+        }
+        
+        # merge these into the main rewards_dict (but don't apply scales here yet)
+        # If rewards_dict already exists, extend it; otherwise it'll be created later, so you may need to feed these into that dict
+        # (In your code we will extend the dict immediately.)
+        # --- End insert block ---
+
+        rewards_dict.update(extra_rewards)
+        
         # -------------------------
         # Apply scales safely (use .get to avoid KeyError)
         # -------------------------
