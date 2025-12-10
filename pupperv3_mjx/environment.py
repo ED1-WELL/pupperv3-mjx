@@ -539,7 +539,7 @@ class PupperV3Env(PipelineEnv):
         torso_z = pipeline_state.x.pos[self._torso_idx - 1, 2]
         target_z = 0.25   # try 0.22..0.32 depending on geometry
         torso_height_reward = jp.clip(torso_z - target_z, 0.0, 0.5)  # raw positive
-        rewards_dict["torso_height"] = torso_height_reward
+        rewards_dict["torso_height_reward"] = torso_height_reward
 
         # Add the computed components to the rewards dict (raw, will be scaled below).
         # Use keys matching the scales in your reward config.
@@ -548,7 +548,7 @@ class PupperV3Env(PipelineEnv):
             "com_over_rear": com_over_rear_reward,
             "rear_contact": rear_contact_reward,
             "front_joint_vel": -front_vel_penalty_raw,
-            "torso_height": torso_height_reward,
+            "torso_height_reward": torso_height_reward,
         }
         
         # merge these into the main rewards_dict (but don't apply scales here yet)
