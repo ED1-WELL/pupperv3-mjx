@@ -552,7 +552,7 @@ class PupperV3Env(PipelineEnv):
         extra_rewards = {
             "com_over_rear": com_over_rear_reward,
             "rear_contact": rear_contact_reward,
-            "torso_height_reward": torso_height_reward,
+            "torso_height_reward": torso_height_reward
         }
         
         # merge these into the main rewards_dict (but don't apply scales here yet)
