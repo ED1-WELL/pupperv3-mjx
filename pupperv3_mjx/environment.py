@@ -531,12 +531,12 @@ class PupperV3Env(PipelineEnv):
         front_contact_bool = contact[:2]
         front_contact_penalty = jp.sum(front_contact_bool.astype(float)) / 2.0
 
-        joint_angles_mod = pipeline_state.q[7:]
-        joint_vel_mod = pipeline_state.qd[7:]
+        #joint_angles_mod = pipeline_state.q[7:]
+        #joint_vel_mod = pipeline_state.qd[7:]
 
         # assume joint_vel.shape == (12,), ordering matches q[7:]
         # front legs are indices 0..2 and 3..5 => front motor indices 0:6 (first six are front motors)
-        front_vel_penalty_raw = jp.sum(joint_vel_mod[:6] ** 2)  # L2 energy of front joint velocities
+        front_vel_penalty_raw = jp.sum(joint_vel[:6] ** 2)  # L2 energy of front joint velocities
         #rewards_dict["front_joint_vel"] = front_vel_penalty_raw  # raw negative, scale controls magnitude
         front_joint_vel = front_vel_penalty_raw
         
