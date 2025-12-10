@@ -189,14 +189,6 @@ class PupperV3Env(PipelineEnv):
         super().__init__(sys, backend="mjx", n_frames=n_frames)
 
         self._reward_config = reward_config
-        ######
-                # canonical ordered reward keys (used to ensure the carry pytree shape is stable)
-        try:
-            self._reward_keys = tuple(self._reward_config.rewards.scales.keys())
-        except Exception:
-            # defensive fallback: empty tuple if reward_config is unexpected
-            self._reward_keys = tuple()
-        ######
         self._torso_geom_ids = body_name_to_geom_ids(sys.mj_model, torso_name)
         self._torso_idx = mujoco.mj_name2id(
             sys.mj_model, mujoco.mjtObj.mjOBJ_BODY.value, torso_name
@@ -339,22 +331,7 @@ class PupperV3Env(PipelineEnv):
         buf = jp.zeros((6, self._imu_latency_distribution.shape[0]), dtype=float)
         buf = buf.at[5, :].set(-1.0)  # gravity is -1.0 in z
         return buf
-    ######
-    def _canonicalize_rewards(self, rewards_dict: Dict[str, Any]) -> Dict[str, jp.ndarray]:
-        """
-        Return a dict that contains exactly the keys in self._reward_keys, with
-        jax jp.float32 values. Missing keys are filled with 0.0. Extra keys
-        (present in rewards_dict but not in canonical keys) are ignored here.
-        """
-        out: Dict[str, jp.ndarray] = {}
-        for k in self._reward_keys:
-            v = rewards_dict.get(k, 0.0)
-            try:
-                out[k] = jp.asarray(v, dtype=jp.float32)
-            except Exception:
-                out[k] = jp.asarray(0.0, dtype=jp.float32)
-        return out
-######
+
     def reset(self, rng: jax.Array) -> State:  # pytype: disable=signature-mismatch
         rng, sample_command_key, sample_orientation_key, randomize_pos_key = jax.random.split(
             rng, 4
@@ -375,10 +352,7 @@ class PupperV3Env(PipelineEnv):
             "command": self.sample_command(sample_command_key),
             "last_contact": jp.zeros(4, dtype=bool),
             "feet_air_time": jp.zeros(4, dtype=float),
-            #"rewards": {k: 0.0 for k in self._reward_config.rewards.scales.keys()},
-                        # canonical reward dict (exact keys and jax dtypes)
-            "rewards": self._canonicalize_rewards({k: 0.0 for k in self._reward_keys}),
-######
+            "rewards": {k: 0.0 for k in self._reward_config.rewards.scales.keys()},
             "kick": jp.array([0.0, 0.0]),
             "step": 0,
             "desired_world_z_in_body_frame": self.sample_body_orientation(sample_orientation_key),
@@ -556,29 +530,13 @@ class PupperV3Env(PipelineEnv):
         # Front contact penalty: fraction of front feet contacting (we will penalize)
         front_contact_bool = contact[:2]
         front_contact_penalty = jp.sum(front_contact_bool.astype(float)) / 2.0
-
-        #joint_angles_mod = pipeline_state.q[7:]
-        #joint_vel_mod = pipeline_state.qd[7:]
-
-        # assume joint_vel.shape == (12,), ordering matches q[7:]
-        # front legs are indices 0..2 and 3..5 => front motor indices 0:6 (first six are front motors)
-        #front_joint_vel = jp.sum(joint_vel[:6] ** 2)  # L2 energy of front joint velocities
-        #rewards_dict["front_joint_vel"] = front_joint_vel  # raw negative, scale controls magnitude
-    
         
-        torso_z = pipeline_state.x.pos[self._torso_idx - 1, 2]
-        target_z = 0.25   # try 0.22..0.32 depending on geometry
-        sigma_z = 0.05
-        torso_height_reward = jp.exp(-((torso_z - target_z) ** 2) / (2 * sigma_z ** 2))
-        rewards_dict["torso_height_reward"] = torso_height_reward
-
         # Add the computed components to the rewards dict (raw, will be scaled below).
         # Use keys matching the scales in your reward config.
         # Make sure keys do not clash with existing keys already in rewards_dict
         extra_rewards = {
             "com_over_rear": com_over_rear_reward,
-            "rear_contact": rear_contact_reward,
-            "torso_height_reward": torso_height_reward
+            "rear_contact": rear_contact_reward,  
         }
         
         # merge these into the main rewards_dict (but don't apply scales here yet)
@@ -608,31 +566,7 @@ class PupperV3Env(PipelineEnv):
         state.info["last_vel"] = joint_vel
         state.info["feet_air_time"] *= ~contact_filt_mm
         state.info["last_contact"] = contact
-        #state.info["rewards"] = rewards_dict
-                ### -------------------------
-        # Canonicalize rewards BEFORE attaching to the carry:
-        # - Keep exactly the keys from self._reward_keys (same as reset()),
-        # - Fill missing keys with 0.0,
-        # - Do NOT add extra keys to the carry (would break JAX scan).
-        # - Store any extras into state.metrics for logging/inspection.
-        # -------------------------
-        # Build canonical mapping using only canonical keys:
-        canonical_from_computed = {k: rewards_dict.get(k, 0.0) for k in self._reward_keys}
-        canonical_rewards = self._canonicalize_rewards(canonical_from_computed)
-
-        # Save any extra computed reward components (not part of canonical keys) into metrics only.
-        for k, v in rewards_dict.items():
-            if k not in canonical_rewards:
-                try:
-                    # convert to python float for metrics logging if possible
-                    state.metrics[k] = float(jp.asarray(v).item())
-                except Exception:
-                    # fallback to str if not convertible
-                    state.metrics[k] = str(v)
-
-        # Attach the canonical reward dict to the carry (stable pytree)
-        #######
-        state.info["rewards"] = canonical_rewards
+        state.info["rewards"] = rewards_dict
         state.info["step"] += 1
 
         # Sample new command if more than 500 timesteps achieved
