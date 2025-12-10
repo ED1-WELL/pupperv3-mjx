@@ -53,7 +53,7 @@ def get_config():
                         # Use negative value to penalize front contact.
                         front_contact_penalty=-1.5,
                         #front_joint_vel=-0.05,
-                        torso_height_reward=5.0,
+                        #torso_height_reward=5.0,
                     )
                 ),
                 # Tracking reward width
