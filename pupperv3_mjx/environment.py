@@ -537,8 +537,9 @@ class PupperV3Env(PipelineEnv):
         # assume joint_vel.shape == (12,), ordering matches q[7:]
         # front legs are indices 0..2 and 3..5 => front motor indices 0:6 (first six are front motors)
         front_vel_penalty_raw = jp.sum(joint_vel_mod[:6] ** 2)  # L2 energy of front joint velocities
-        #rewards_dict["front_joint_vel"] = - front_vel_penalty_raw  # raw negative, scale controls magnitude
-
+        #rewards_dict["front_joint_vel"] = front_vel_penalty_raw  # raw negative, scale controls magnitude
+        front_joint_vel = front_vel_penalty_raw
+        
         torso_z = pipeline_state.x.pos[self._torso_idx - 1, 2]
         target_z = 0.25   # try 0.22..0.32 depending on geometry
         sigma_z = 0.05
@@ -552,7 +553,7 @@ class PupperV3Env(PipelineEnv):
         extra_rewards = {
             "com_over_rear": com_over_rear_reward,
             "rear_contact": rear_contact_reward,
-            "front_joint_vel": front_vel_penalty_raw,
+            "front_joint_vel": front_joint_vel,
             "torso_height_reward": torso_height_reward,
         }
         
