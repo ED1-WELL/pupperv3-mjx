@@ -584,7 +584,28 @@ class PupperV3Env(PipelineEnv):
         state.info["last_vel"] = joint_vel
         state.info["feet_air_time"] *= ~contact_filt_mm
         state.info["last_contact"] = contact
-        state.info["rewards"] = rewards_dict
+        #state.info["rewards"] = rewards_dict
+#################
+        # ---- Begin replacement: ensure canonical rewards dict for JAX ----
+        # Build canonical rewards dict using keys from the reward config so the
+        # pytree structure of state.info["rewards"] is stable between reset() and step().
+        config_keys = list(self._reward_config.rewards.scales.keys())
+        
+        # Fill canonical dict with whatever we computed, falling back to 0.0
+        complete_rewards = {k: rewards_dict.get(k, 0.0) for k in config_keys}
+        
+        # If you intentionally added extra debug/aux keys (e.g. front_joint_vel,
+        # torso_height_reward), move them to state.metrics so we still log them,
+        # but do not change the carry structure used by JAX.
+        extra_keys = [k for k in rewards_dict.keys() if k not in complete_rewards]
+        for k in extra_keys:
+            # add extras into metrics for visibility (won't break JAX scan)
+            state.metrics[k] = rewards_dict[k]
+        
+        # Finally set the canonical rewards mapping into the carry
+        state.info["rewards"] = complete_rewards
+        # ---- End replacement ----
+#########
         state.info["step"] += 1
 
         # Sample new command if more than 500 timesteps achieved
