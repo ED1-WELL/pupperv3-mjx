@@ -530,16 +530,21 @@ class PupperV3Env(PipelineEnv):
         # Front contact penalty: fraction of front feet contacting (we will penalize)
         front_contact_bool = contact[:2]
         front_contact_penalty = jp.sum(front_contact_bool.astype(float)) / 2.0
-        
+
+        joint_angles_mod = pipeline_state.q[7:]
+        joint_vel_mod = pipeline_state.qd[7:]
+
         # assume joint_vel.shape == (12,), ordering matches q[7:]
         # front legs are indices 0..2 and 3..5 => front motor indices 0:6 (first six are front motors)
-        front_vel_penalty_raw = jp.sum(joint_vel[:6] ** 2)  # L2 energy of front joint velocities
-        rewards_dict["front_joint_vel"] = - front_vel_penalty_raw  # raw negative, scale controls magnitude
+        front_vel_penalty_raw = jp.sum(joint_vel_mod[:6] ** 2)  # L2 energy of front joint velocities
+        #rewards_dict["front_joint_vel"] = - front_vel_penalty_raw  # raw negative, scale controls magnitude
 
         torso_z = pipeline_state.x.pos[self._torso_idx - 1, 2]
         target_z = 0.25   # try 0.22..0.32 depending on geometry
-        torso_height_reward = jp.clip(torso_z - target_z, 0.0, 0.5)  # raw positive
-        rewards_dict["torso_height_reward"] = torso_height_reward
+        sigma_z = 0.05
+        torso_height_reward = jp.exp(-((torso_z - target_z) ** 2) / (2 * sigma_z ** 2))
+
+        #rewards_dict["torso_height_reward"] = torso_height_reward
 
         # Add the computed components to the rewards dict (raw, will be scaled below).
         # Use keys matching the scales in your reward config.
@@ -547,7 +552,7 @@ class PupperV3Env(PipelineEnv):
         extra_rewards = {
             "com_over_rear": com_over_rear_reward,
             "rear_contact": rear_contact_reward,
-            "front_joint_vel": -front_vel_penalty_raw,
+            "front_joint_vel": front_vel_penalty_raw,
             "torso_height_reward": torso_height_reward,
         }
         
