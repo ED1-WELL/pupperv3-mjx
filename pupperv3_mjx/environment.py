@@ -536,8 +536,8 @@ class PupperV3Env(PipelineEnv):
 
         # assume joint_vel.shape == (12,), ordering matches q[7:]
         # front legs are indices 0..2 and 3..5 => front motor indices 0:6 (first six are front motors)
-        front_joint_vel = jp.sum(joint_vel[:6] ** 2)  # L2 energy of front joint velocities
-        rewards_dict["front_joint_vel"] = front_joint_vel  # raw negative, scale controls magnitude
+        #front_joint_vel = jp.sum(joint_vel[:6] ** 2)  # L2 energy of front joint velocities
+        #rewards_dict["front_joint_vel"] = front_joint_vel  # raw negative, scale controls magnitude
     
         
         torso_z = pipeline_state.x.pos[self._torso_idx - 1, 2]
@@ -552,7 +552,6 @@ class PupperV3Env(PipelineEnv):
         extra_rewards = {
             "com_over_rear": com_over_rear_reward,
             "rear_contact": rear_contact_reward,
-            "front_joint_vel": front_joint_vel,
             "torso_height_reward": torso_height_reward,
         }
         
@@ -583,27 +582,27 @@ class PupperV3Env(PipelineEnv):
         state.info["last_vel"] = joint_vel
         state.info["feet_air_time"] *= ~contact_filt_mm
         state.info["last_contact"] = contact
-        #state.info["rewards"] = rewards_dict
+        state.info["rewards"] = rewards_dict
 #################
-        # ---- Begin robust canonicalization (paste into step(), replacing previous state.info["rewards"] = ...) ----
-        # Use the keys present in the incoming carry (reset created these).
-        # This ensures JAX sees the same pytree structure for state.info["rewards"].
-        incoming_reward_keys = list(state.info["rewards"].keys())
+        # # ---- Begin robust canonicalization (paste into step(), replacing previous state.info["rewards"] = ...) ----
+        # # Use the keys present in the incoming carry (reset created these).
+        # # This ensures JAX sees the same pytree structure for state.info["rewards"].
+        # incoming_reward_keys = list(state.info["rewards"].keys())
         
-        # Build canonical mapping: use computed rewards if present, else fill 0.0 so shape stays same.
-        complete_rewards = {k: rewards_dict.get(k, 0.0) for k in incoming_reward_keys}
+        # # Build canonical mapping: use computed rewards if present, else fill 0.0 so shape stays same.
+        # complete_rewards = {k: rewards_dict.get(k, 0.0) for k in incoming_reward_keys}
         
-        # Any extra keys we computed that are NOT in the incoming carry should NOT be added to the carry.
-        # Put them in state.metrics instead (visible in logs but won't change the carry).
-        extra_keys = [k for k in rewards_dict.keys() if k not in complete_rewards]
-        for k in extra_keys:
-            # ensure metrics exists (it does), and store the value for logging/inspection
-            # convert to a python float if needed for compatibility (optional)
-            state.metrics[k] = rewards_dict[k]
+        # # Any extra keys we computed that are NOT in the incoming carry should NOT be added to the carry.
+        # # Put them in state.metrics instead (visible in logs but won't change the carry).
+        # extra_keys = [k for k in rewards_dict.keys() if k not in complete_rewards]
+        # for k in extra_keys:
+        #     # ensure metrics exists (it does), and store the value for logging/inspection
+        #     # convert to a python float if needed for compatibility (optional)
+        #     state.metrics[k] = rewards_dict[k]
         
-        # Now assign the canonical rewards dict back into the carry (same keys as reset).
-        state.info["rewards"] = complete_rewards
-        # ---- End canonicalization ----
+        # # Now assign the canonical rewards dict back into the carry (same keys as reset).
+        # state.info["rewards"] = complete_rewards
+        # # ---- End canonicalization ----
 #########
         state.info["step"] += 1
 
