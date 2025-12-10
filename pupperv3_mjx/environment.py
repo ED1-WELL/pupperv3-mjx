@@ -536,9 +536,9 @@ class PupperV3Env(PipelineEnv):
 
         # assume joint_vel.shape == (12,), ordering matches q[7:]
         # front legs are indices 0..2 and 3..5 => front motor indices 0:6 (first six are front motors)
-        front_vel_penalty_raw = jp.sum(joint_vel[:6] ** 2)  # L2 energy of front joint velocities
+        front_joint_vel = jp.sum(joint_vel[:6] ** 2)  # L2 energy of front joint velocities
         #rewards_dict["front_joint_vel"] = front_vel_penalty_raw  # raw negative, scale controls magnitude
-        front_joint_vel = front_vel_penalty_raw
+    
         
         torso_z = pipeline_state.x.pos[self._torso_idx - 1, 2]
         target_z = 0.25   # try 0.22..0.32 depending on geometry
@@ -587,24 +587,23 @@ class PupperV3Env(PipelineEnv):
         #state.info["rewards"] = rewards_dict
 #################
         # ---- Begin replacement: ensure canonical rewards dict for JAX ----
-        # Build canonical rewards dict using keys from the reward config so the
-        # pytree structure of state.info["rewards"] is stable between reset() and step().
+        # canonical keys (preserve order)
         config_keys = list(self._reward_config.rewards.scales.keys())
         
-        # Fill canonical dict with whatever we computed, falling back to 0.0
+        # Build canonical mapping: pick values from rewards_dict if present, else 0.0
         complete_rewards = {k: rewards_dict.get(k, 0.0) for k in config_keys}
         
-        # If you intentionally added extra debug/aux keys (e.g. front_joint_vel,
-        # torso_height_reward), move them to state.metrics so we still log them,
-        # but do not change the carry structure used by JAX.
+        # Any extra keys we computed (e.g. debug metrics like front_joint_vel or torso_height_reward)
+        # put them into state.metrics so they are visible but do not change the carry pytree structure.
         extra_keys = [k for k in rewards_dict.keys() if k not in complete_rewards]
         for k in extra_keys:
-            # add extras into metrics for visibility (won't break JAX scan)
+            # add to metrics for logging/visibility; ensure metrics exists
             state.metrics[k] = rewards_dict[k]
         
-        # Finally set the canonical rewards mapping into the carry
+        # Assign canonical rewards dict back into the state carry
         state.info["rewards"] = complete_rewards
         # ---- End replacement ----
+
 #########
         state.info["step"] += 1
 
