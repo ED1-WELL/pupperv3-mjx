@@ -585,24 +585,25 @@ class PupperV3Env(PipelineEnv):
         state.info["last_contact"] = contact
         #state.info["rewards"] = rewards_dict
 #################
-        # ---- Begin replacement: ensure canonical rewards dict for JAX ----
-        # canonical keys (preserve order)
-        config_keys = list(self._reward_config.rewards.scales.keys())
+        # ---- Begin robust canonicalization (paste into step(), replacing previous state.info["rewards"] = ...) ----
+        # Use the keys present in the incoming carry (reset created these).
+        # This ensures JAX sees the same pytree structure for state.info["rewards"].
+        incoming_reward_keys = list(state.info["rewards"].keys())
         
-        # Build canonical mapping: pick values from rewards_dict if present, else 0.0
-        complete_rewards = {k: rewards_dict.get(k, 0.0) for k in config_keys}
+        # Build canonical mapping: use computed rewards if present, else fill 0.0 so shape stays same.
+        complete_rewards = {k: rewards_dict.get(k, 0.0) for k in incoming_reward_keys}
         
-        # Any extra keys we computed (e.g. debug metrics like front_joint_vel or torso_height_reward)
-        # put them into state.metrics so they are visible but do not change the carry pytree structure.
+        # Any extra keys we computed that are NOT in the incoming carry should NOT be added to the carry.
+        # Put them in state.metrics instead (visible in logs but won't change the carry).
         extra_keys = [k for k in rewards_dict.keys() if k not in complete_rewards]
         for k in extra_keys:
-            # add to metrics for logging/visibility; ensure metrics exists
+            # ensure metrics exists (it does), and store the value for logging/inspection
+            # convert to a python float if needed for compatibility (optional)
             state.metrics[k] = rewards_dict[k]
         
-        # Assign canonical rewards dict back into the state carry
+        # Now assign the canonical rewards dict back into the carry (same keys as reset).
         state.info["rewards"] = complete_rewards
-        # ---- End replacement ----
-
+        # ---- End canonicalization ----
 #########
         state.info["step"] += 1
 
