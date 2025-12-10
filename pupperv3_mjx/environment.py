@@ -189,6 +189,14 @@ class PupperV3Env(PipelineEnv):
         super().__init__(sys, backend="mjx", n_frames=n_frames)
 
         self._reward_config = reward_config
+        ######
+                # canonical ordered reward keys (used to ensure the carry pytree shape is stable)
+        try:
+            self._reward_keys = tuple(self._reward_config.rewards.scales.keys())
+        except Exception:
+            # defensive fallback: empty tuple if reward_config is unexpected
+            self._reward_keys = tuple()
+        ######
         self._torso_geom_ids = body_name_to_geom_ids(sys.mj_model, torso_name)
         self._torso_idx = mujoco.mj_name2id(
             sys.mj_model, mujoco.mjtObj.mjOBJ_BODY.value, torso_name
@@ -331,7 +339,22 @@ class PupperV3Env(PipelineEnv):
         buf = jp.zeros((6, self._imu_latency_distribution.shape[0]), dtype=float)
         buf = buf.at[5, :].set(-1.0)  # gravity is -1.0 in z
         return buf
-
+    ######
+    def _canonicalize_rewards(self, rewards_dict: Dict[str, Any]) -> Dict[str, jp.ndarray]:
+        """
+        Return a dict that contains exactly the keys in self._reward_keys, with
+        jax jp.float32 values. Missing keys are filled with 0.0. Extra keys
+        (present in rewards_dict but not in canonical keys) are ignored here.
+        """
+        out: Dict[str, jp.ndarray] = {}
+        for k in self._reward_keys:
+            v = rewards_dict.get(k, 0.0)
+            try:
+                out[k] = jp.asarray(v, dtype=jp.float32)
+            except Exception:
+                out[k] = jp.asarray(0.0, dtype=jp.float32)
+        return out
+######
     def reset(self, rng: jax.Array) -> State:  # pytype: disable=signature-mismatch
         rng, sample_command_key, sample_orientation_key, randomize_pos_key = jax.random.split(
             rng, 4
@@ -352,7 +375,10 @@ class PupperV3Env(PipelineEnv):
             "command": self.sample_command(sample_command_key),
             "last_contact": jp.zeros(4, dtype=bool),
             "feet_air_time": jp.zeros(4, dtype=float),
-            "rewards": {k: 0.0 for k in self._reward_config.rewards.scales.keys()},
+            #"rewards": {k: 0.0 for k in self._reward_config.rewards.scales.keys()},
+                        # canonical reward dict (exact keys and jax dtypes)
+            "rewards": self._canonicalize_rewards({k: 0.0 for k in self._reward_keys}),
+######
             "kick": jp.array([0.0, 0.0]),
             "step": 0,
             "desired_world_z_in_body_frame": self.sample_body_orientation(sample_orientation_key),
@@ -582,28 +608,31 @@ class PupperV3Env(PipelineEnv):
         state.info["last_vel"] = joint_vel
         state.info["feet_air_time"] *= ~contact_filt_mm
         state.info["last_contact"] = contact
-        state.info["rewards"] = rewards_dict
-#################
-        # # ---- Begin robust canonicalization (paste into step(), replacing previous state.info["rewards"] = ...) ----
-        # # Use the keys present in the incoming carry (reset created these).
-        # # This ensures JAX sees the same pytree structure for state.info["rewards"].
-        # incoming_reward_keys = list(state.info["rewards"].keys())
-        
-        # # Build canonical mapping: use computed rewards if present, else fill 0.0 so shape stays same.
-        # complete_rewards = {k: rewards_dict.get(k, 0.0) for k in incoming_reward_keys}
-        
-        # # Any extra keys we computed that are NOT in the incoming carry should NOT be added to the carry.
-        # # Put them in state.metrics instead (visible in logs but won't change the carry).
-        # extra_keys = [k for k in rewards_dict.keys() if k not in complete_rewards]
-        # for k in extra_keys:
-        #     # ensure metrics exists (it does), and store the value for logging/inspection
-        #     # convert to a python float if needed for compatibility (optional)
-        #     state.metrics[k] = rewards_dict[k]
-        
-        # # Now assign the canonical rewards dict back into the carry (same keys as reset).
-        # state.info["rewards"] = complete_rewards
-        # # ---- End canonicalization ----
-#########
+        #state.info["rewards"] = rewards_dict
+                ### -------------------------
+        # Canonicalize rewards BEFORE attaching to the carry:
+        # - Keep exactly the keys from self._reward_keys (same as reset()),
+        # - Fill missing keys with 0.0,
+        # - Do NOT add extra keys to the carry (would break JAX scan).
+        # - Store any extras into state.metrics for logging/inspection.
+        # -------------------------
+        # Build canonical mapping using only canonical keys:
+        canonical_from_computed = {k: rewards_dict.get(k, 0.0) for k in self._reward_keys}
+        canonical_rewards = self._canonicalize_rewards(canonical_from_computed)
+
+        # Save any extra computed reward components (not part of canonical keys) into metrics only.
+        for k, v in rewards_dict.items():
+            if k not in canonical_rewards:
+                try:
+                    # convert to python float for metrics logging if possible
+                    state.metrics[k] = float(jp.asarray(v).item())
+                except Exception:
+                    # fallback to str if not convertible
+                    state.metrics[k] = str(v)
+
+        # Attach the canonical reward dict to the carry (stable pytree)
+        #######
+        state.info["rewards"] = canonical_rewards
         state.info["step"] += 1
 
         # Sample new command if more than 500 timesteps achieved
